@@ -1,34 +1,32 @@
+import asyncio
 import time
 
 from fastapi import status
 from fastapi.exceptions import HTTPException
-from openai import APIConnectionError, APIStatusError, APITimeoutError
 from pydantic import ValidationError
-from tenacity import retry, retry_if_exception, wait_exponential_jitter
+from tenacity import retry, retry_if_exception, wait_exponential_jitter, stop_after_attempt
 
 from src.core.ai_settings import client
 from src.core.settings import settings
-from src.schemas.test_schema import Test_Schema
+from src.schemas.test_schema import Test_Schema, Cookies, Metrics
+from src.dependencies.utils import is_retryable, map_openai_errors, map_openai_errors_stream, metrics_formatted, metrics_formatted_stream
 
-message_history = []
+message_history: dict[str, list] = {}
 
-def is_retryable(exception: Exception):
-    if isinstance(exception, APIStatusError):
-        return exception.response.status_code >= 500
-    return bool(isinstance(exception, (APIConnectionError, APITimeoutError)))
+sem = asyncio.Semaphore(3)
 
-@retry(wait=wait_exponential_jitter(max=5), retry=retry_if_exception(is_retryable), reraise=True)
+@retry(wait=wait_exponential_jitter(max=5), retry=retry_if_exception(is_retryable), stop=stop_after_attempt(3), reraise=True)
 async def _ai_request(messages: list):
-    return await client.chat.completions.create(
-                model=settings.AI_MODEL,
-                messages=messages,
-                extra_body={"reasoning": {"enabled": True}},
-                timeout=30
-            )
+    async with sem:
+        return await client.chat.completions.create(
+                    model=settings.AI_MODEL,
+                    messages=messages,
+                    extra_body={"reasoning": {"enabled": True}},
+                    timeout=30
+                )
 
-@retry(wait=wait_exponential_jitter(max=5), retry=retry_if_exception(is_retryable), reraise=True)
+@retry(wait=wait_exponential_jitter(max=5), retry=retry_if_exception(is_retryable), stop=stop_after_attempt(3), reraise=True)
 async def _ai_request_stream(messages: list):
-
     return await client.chat.completions.create(
         model=settings.AI_MODEL,
         messages=messages,
@@ -41,92 +39,81 @@ async def _ai_request_stream(messages: list):
 async def _ai_request_extract(messages: list):
     attempts = 2
     messages.append({"role": "system", "content": "extract data from text"})
+    messages = messages.copy()
+    response = None
     for attempt in range(attempts):
         try:
-            response = await client.chat.completions.parse(
-                        model=settings.AI_MODEL,
-                        messages=messages,
-                        response_format=Test_Schema,
-                        timeout=30
-                    )
-            response.choices[0].message.parsed
+            async with sem:
+                response = await client.chat.completions.parse(
+                            model=settings.AI_MODEL,
+                            messages=messages,
+                            response_format=Test_Schema,
+                            timeout=30
+                        )
             return response
-        except ValidationError as e:
-                if attempt < attempts - 1:
+        except Exception as e:
+                if attempt < attempts - 1 and response is not None:
                     messages.append({"role": "assistant", "content": response.choices[0].message.content})
-                    messages.append({"role": "system", "content": f"You previous answer raised validation error, here is error {e.errors()}, fix it"})
+                    messages.append({"role": "system", "content": f"You previous answer raised validation error, here is error {e}, fix it"})
                 else:
                     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot validate info")
 
-async def ai_chat(prompt: str):
+@map_openai_errors
+async def ai_chat(prompt: str, cookies: Cookies) -> Metrics:
     start_time = time.time()
-    current_message = message_history + [{"role": "user", "content": prompt}]
-    try:
-        response = await _ai_request(current_message)
-    except APIStatusError as e:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Ошибка на стороне сервиса: {e.message}")
-    except (APIConnectionError, APITimeoutError) as e:
-        raise HTTPException(status_code=status.HTTP_408_REQUEST_TIMEOUT, detail="Истекло время ожидания")
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Ошибка сервера")
+    if cookies.session_id not in message_history:
+        message_history[cookies.session_id] = []
+    current_message = message_history[cookies.session_id] + [{"role": "user", "content": prompt}]
+
+    response = await _ai_request(current_message)
     
-    ai_response = response.choices[0].message.content
-    message_history.append({"role": "user", "content": prompt})
-    message_history.append({"role": "assistant", "content": ai_response})
+    metrics = metrics_formatted(response, time.time()-start_time)
+    message_history[cookies.session_id].append({"role": "user", "content": prompt})
+    message_history[cookies.session_id].append({"role": "assistant", "content": metrics.response})
 
-    return {"response":ai_response, "latency": time.time()-start_time, "input_tokens": response.usage.prompt_tokens,
-            "output_tokens": response.usage.completion_tokens,
-            "cost": ((response.usage.prompt_tokens*5/1_000_000.0)+(response.usage.completion_tokens*30/1_000_000.0))}
+    return metrics
 
-async def ai_chat_stream(prompt: str):
+@map_openai_errors_stream
+async def ai_chat_stream(prompt: str, cookies: Cookies):
     start_time = time.time()
-    current_message = message_history + [{"role": "user", "content": prompt}]
-    try:
-        response = await _ai_request_stream(current_message)
-    except APIStatusError as e:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Ошибка на стороне сервиса: {e.message}")
-    except (APIConnectionError, APITimeoutError) as e:
-        raise HTTPException(status_code=status.HTTP_408_REQUEST_TIMEOUT, detail="Истекло время ожидания")
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Ошибка сервера")
+    if cookies.session_id not in message_history:
+        message_history[cookies.session_id] = []
+    current_message = message_history[cookies.session_id] + [{"role": "user", "content": prompt}]
+
+    response = await _ai_request_stream(current_message)
     
     full_response = ""
     final_usage = None
 
     try:
-        async for chunk in response:
-            if chunk.choices and chunk.choices[0].delta.content:
-                full_response += chunk.choices[0].delta.content
-                yield {"type": "text", "data": chunk.choices[0].delta.content}
-            if hasattr(chunk, "usage") and chunk.usage is not None:
-                final_usage = chunk.usage
+        async with sem:
+            async for chunk in response:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    full_response += chunk.choices[0].delta.content
+                    yield {"type": "text", "data": chunk.choices[0].delta.content}
+                if hasattr(chunk, "usage") and chunk.usage is not None:
+                    final_usage = chunk.usage
     except Exception as e:
         yield {"type": "error", "data": str(e)}
 
-    message_history.append({"role": "user", "content": prompt})
-    message_history.append({"role": "assistant", "content": full_response})
+    message_history[cookies.session_id].append({"role": "user", "content": prompt})
+    message_history[cookies.session_id].append({"role": "assistant", "content": full_response})
 
     if final_usage:
-        yield {"type": "metrics", "data": {"latency": time.time()-start_time, "input_tokens": chunk.usage.prompt_tokens,
-        "output_tokens": chunk.usage.completion_tokens,
-        "cost": ((chunk.usage.prompt_tokens*5/1_000_000.0)+(chunk.usage.completion_tokens*30/1_000_000.0))}}
+        metrics = metrics_formatted_stream(final_usage, time.time()-start_time)
+        yield {"type": "metrics", "data": metrics}
 
-async def ai_chat_extract(prompt: str):
+@map_openai_errors
+async def ai_chat_extract(prompt: str, cookies: Cookies):
     start_time = time.time()
-    current_message = message_history + [{"role": "user", "content": prompt}]
-    try:
-        response = await _ai_request_extract(current_message)
-    except APIStatusError as e:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Ошибка на стороне сервиса: {e.message}")
-    except (APIConnectionError, APITimeoutError) as e:
-        raise HTTPException(status_code=status.HTTP_408_REQUEST_TIMEOUT, detail="Истекло время ожидания")
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Ошибка сервера")
+    if cookies.session_id not in message_history:
+        message_history[cookies.session_id] = []
+    current_message = message_history[cookies.session_id] + [{"role": "user", "content": prompt}]
 
-    ai_response = response.choices[0].message.parsed
-    message_history.append({"role": "user", "content": prompt})
-    message_history.append({"role": "assistant", "content": ai_response})
+    response = await _ai_request_extract(current_message)
 
-    return {"response":ai_response, "latency": time.time()-start_time, "input_tokens": response.usage.prompt_tokens,
-            "output_tokens": response.usage.completion_tokens,
-            "cost": ((response.usage.prompt_tokens*5/1_000_000.0)+(response.usage.completion_tokens*30/1_000_000.0))}
+    metrics = metrics_formatted(response, time.time()-start_time)
+    message_history[cookies.session_id].append({"role": "user", "content": prompt})
+    message_history[cookies.session_id].append({"role": "assistant", "content": metrics.response})
+
+    return metrics

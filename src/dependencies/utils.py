@@ -1,0 +1,66 @@
+import functools
+
+from fastapi import status, HTTPException
+from openai import APIStatusError, APIConnectionError, APITimeoutError
+from openai.types.chat import ChatCompletion, ParsedChatCompletion
+from openai.types.completion_usage import CompletionUsage
+
+from src.schemas.test_schema import Metrics
+
+def is_retryable(exception: Exception):
+    if isinstance(exception, APIStatusError):
+        return exception.response.status_code >= 500
+    return bool(isinstance(exception, (APIConnectionError, APITimeoutError)))
+
+def map_openai_errors(func):
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs):
+        try:
+            return await func(*args, **kwargs)
+        except APIStatusError as e:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Ошибка на стороне сервиса: {e.message}")
+        except (APIConnectionError, APITimeoutError) as e:
+            raise HTTPException(status_code=status.HTTP_408_REQUEST_TIMEOUT, detail="Истекло время ожидания")
+        except Exception as e:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ошибка сервера, {e}")
+    return wrapper
+
+def map_openai_errors_stream(func):
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs):
+        try:
+            async for chunk in func(*args, **kwargs):
+                yield chunk
+        except APIStatusError as e:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Ошибка на стороне сервиса: {e.message}")
+        except (APIConnectionError, APITimeoutError) as e:
+            raise HTTPException(status_code=status.HTTP_408_REQUEST_TIMEOUT, detail="Истекло время ожидания")
+        except Exception as e:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ошибка сервера, {e}")
+    return wrapper
+
+def metrics_formatted(response: ChatCompletion | ParsedChatCompletion, response_time: float, parse: bool = False) -> Metrics:
+    content = response.choices[0].message
+    if parse:
+        if content.refusal:
+            content = content.refusal
+        else:
+            content = content.parsed
+    else:
+        content = content.content
+    return Metrics(
+        response=content,
+        latency=response_time,
+        input_tokens=response.usage.prompt_tokens,
+        output_tokens=response.usage.completion_tokens,
+        cached_tokens=response.usage.prompt_tokens_details.cached_tokens
+    )
+
+def metrics_formatted_stream(response: CompletionUsage, response_time: float) -> Metrics:
+    return Metrics(
+        latency=response_time,
+        input_tokens=response.prompt_tokens,
+        output_tokens=response.completion_tokens,
+        cached_tokens=response.prompt_tokens_details.cached_tokens
+    )
+
