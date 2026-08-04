@@ -4,6 +4,7 @@ import time
 from fastapi import status
 from fastapi.exceptions import HTTPException
 from pydantic import ValidationError
+from openai import LengthFinishReasonError, APIStatusError, APIConnectionError, APITimeoutError
 from tenacity import retry, retry_if_exception, wait_exponential_jitter, stop_after_attempt
 
 from src.core.ai_settings import client
@@ -51,12 +52,14 @@ async def _ai_request_extract(messages: list):
                             timeout=30
                         )
             return response
-        except Exception as e:
+        except (ValidationError, LengthFinishReasonError) as e:
                 if attempt < attempts - 1 and response is not None:
                     messages.append({"role": "assistant", "content": response.choices[0].message.content})
-                    messages.append({"role": "system", "content": f"You previous answer raised validation error, here is error {e}, fix it"})
+                    messages.append({"role": "system", "content": f"You previous answer raised error, here is error {e}, fix it"})
                 else:
                     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot validate info")
+        except Exception:
+            raise
 
 @map_openai_errors
 async def ai_chat(prompt: str, cookies: Cookies) -> Metrics:
@@ -112,7 +115,7 @@ async def ai_chat_extract(prompt: str, cookies: Cookies):
 
     response = await _ai_request_extract(current_message)
 
-    metrics = metrics_formatted(response, time.time()-start_time)
+    metrics = metrics_formatted(response, time.time()-start_time, parse=True)
     message_history[cookies.session_id].append({"role": "user", "content": prompt})
     message_history[cookies.session_id].append({"role": "assistant", "content": metrics.response})
 

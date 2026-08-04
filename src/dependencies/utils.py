@@ -1,11 +1,14 @@
 import functools
+import uuid
 
-from fastapi import status, HTTPException
+from typing import Annotated
+
+from fastapi import status, HTTPException, Response, Cookie
 from openai import APIStatusError, APIConnectionError, APITimeoutError
 from openai.types.chat import ChatCompletion, ParsedChatCompletion
 from openai.types.completion_usage import CompletionUsage
 
-from src.schemas.test_schema import Metrics
+from src.schemas.test_schema import Metrics, Cookies
 
 def is_retryable(exception: Exception):
     if isinstance(exception, APIStatusError):
@@ -64,3 +67,9 @@ def metrics_formatted_stream(response: CompletionUsage, response_time: float) ->
         cached_tokens=response.prompt_tokens_details.cached_tokens
     )
 
+def get_cookie(response: Response, cookies: Annotated[Cookies | None, Cookie()] = None):
+    if not cookies or not cookies.session_id:
+        new_session_id = str(uuid.uuid4())
+        cookies = Cookies(session_id=new_session_id)
+        response.set_cookie(key="session_id", value=new_session_id, httponly=True, expires=3600)
+    return cookies
