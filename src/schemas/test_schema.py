@@ -15,11 +15,11 @@ class Metrics(BaseModel):
     latency: float
     input_tokens: int
     output_tokens: int
-    cached_tokens: int
+    # cached_tokens: int
 
-    @computed_field
-    @property
-    def cost(self) -> float:
-        missed_tokens = self.input_tokens - self.cached_tokens
-        return (((settings.INPUT_CACHE_HIT * self.cached_tokens) + (settings.INPUT_CACHE_MISS * missed_tokens) 
-                 + (settings.OUTPUT_TOKENS * self.output_tokens)) / 1_000_000.0)
+    # @computed_field
+    # @property
+    # def cost(self) -> float:
+        # missed_tokens = self.input_tokens - self.cached_tokens
+        # return (((settings.INPUT_CACHE_HIT * self.cached_tokens) + (settings.INPUT_CACHE_MISS * missed_tokens) 
+                 # + (settings.OUTPUT_TOKENS * self.output_tokens)) / 1_000_000.0)

@@ -4,12 +4,13 @@ import time
 from fastapi import status
 from fastapi.exceptions import HTTPException
 from pydantic import ValidationError
-from openai import LengthFinishReasonError, APIStatusError, APIConnectionError, APITimeoutError
+from openai import LengthFinishReasonError
 from tenacity import retry, retry_if_exception, wait_exponential_jitter, stop_after_attempt
 
 from src.core.ai_settings import client
 from src.core.settings import settings
 from src.schemas.test_schema import Test_Schema, Cookies, Metrics
+from src.models.chunks import Chunk
 from src.dependencies.utils import is_retryable, map_openai_errors, map_openai_errors_stream, metrics_formatted, metrics_formatted_stream
 
 message_history: dict[str, list] = {}
@@ -62,26 +63,32 @@ async def _ai_request_extract(messages: list):
             raise
 
 @map_openai_errors
-async def ai_chat(prompt: str, cookies: Cookies) -> Metrics:
+async def ai_chat(prompt: str, cookies: Cookies, embeddings: list[Chunk] | None = None) -> Metrics:
     start_time = time.time()
-    if cookies.session_id not in message_history:
-        message_history[cookies.session_id] = []
-    current_message = message_history[cookies.session_id] + [{"role": "user", "content": prompt}]
-
+    history = message_history.setdefault(cookies.session_id, [])
+    if embeddings:
+        context = [[embedding.content] for embedding in embeddings]
+        vect = [[embedding.embedding] for embedding in embeddings]
+        chunks = [{"context": c, "vectors": v} for c, v in zip(context, vect)]
+        current_message = history + [{"role": "system", "content": "отвечай только на основе предоставленного контекста, "
+                                    "если ответа нет в контексте — так и скажи"},
+                                    {"role": "user", "content": f"Контекст: {context}\nПромпт: {prompt}"}]
+    else:
+        current_message = history + [{"role": "user", "content": prompt}]
+                                
     response = await _ai_request(current_message)
     
     metrics = metrics_formatted(response, time.time()-start_time)
-    message_history[cookies.session_id].append({"role": "user", "content": prompt})
-    message_history[cookies.session_id].append({"role": "assistant", "content": metrics.response})
+    history.append({"role": "user", "content": prompt})
+    history.append({"role": "assistant", "content": metrics.response})
 
-    return metrics
+    return {"response": metrics, "chunks": chunks} if embeddings else metrics
 
 @map_openai_errors_stream
 async def ai_chat_stream(prompt: str, cookies: Cookies):
     start_time = time.time()
-    if cookies.session_id not in message_history:
-        message_history[cookies.session_id] = []
-    current_message = message_history[cookies.session_id] + [{"role": "user", "content": prompt}]
+    history = message_history.setdefault(cookies.session_id, [])
+    current_message = history + [{"role": "user", "content": prompt}]
 
     response = await _ai_request_stream(current_message)
     
@@ -99,8 +106,8 @@ async def ai_chat_stream(prompt: str, cookies: Cookies):
     except Exception as e:
         yield {"type": "error", "data": str(e)}
 
-    message_history[cookies.session_id].append({"role": "user", "content": prompt})
-    message_history[cookies.session_id].append({"role": "assistant", "content": full_response})
+    history.append({"role": "user", "content": prompt})
+    history.append({"role": "assistant", "content": full_response})
 
     if final_usage:
         metrics = metrics_formatted_stream(final_usage, time.time()-start_time)
@@ -109,14 +116,13 @@ async def ai_chat_stream(prompt: str, cookies: Cookies):
 @map_openai_errors
 async def ai_chat_extract(prompt: str, cookies: Cookies):
     start_time = time.time()
-    if cookies.session_id not in message_history:
-        message_history[cookies.session_id] = []
-    current_message = message_history[cookies.session_id] + [{"role": "user", "content": prompt}]
+    history = message_history.setdefault(cookies.session_id, [])
+    current_message = history + [{"role": "user", "content": prompt}]
 
     response = await _ai_request_extract(current_message)
 
     metrics = metrics_formatted(response, time.time()-start_time, parse=True)
-    message_history[cookies.session_id].append({"role": "user", "content": prompt})
-    message_history[cookies.session_id].append({"role": "assistant", "content": metrics.response})
+    history.append({"role": "user", "content": prompt})
+    history.append({"role": "assistant", "content": metrics.response})
 
     return metrics
