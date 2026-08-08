@@ -11,9 +11,11 @@ from src.core.settings import settings
 
 model = OllamaEmbeddings(model="bge-m3", base_url=settings.OLLAMA_URL)
 
-async def prompt_embedding(session: AsyncSession, text: str) -> list[Chunk] | None:
+async def prompt_embedding(session: AsyncSession, text: str):
     embeddings = await model.aembed_query(text)
-    result = await session.scalars(select(Chunk).order_by(Chunk.embedding.cosine_distance(embeddings)).limit(5))
+    distance = Chunk.embedding.cosine_distance(embeddings)
+    query = select(Chunk, distance).order_by(distance).limit(5)
+    result = await session.execute(query)
     return result.all()
 
 async def chunking(session: AsyncSession, document_id: str, texts: list[str], filename: str):

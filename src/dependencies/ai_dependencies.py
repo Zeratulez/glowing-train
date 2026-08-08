@@ -23,7 +23,7 @@ async def _ai_request(messages: list):
         return await client.chat.completions.create(
                     model=settings.AI_MODEL,
                     messages=messages,
-                    extra_body={"reasoning": {"enabled": True}},
+                    reasoning_effort="medium",
                     timeout=30
                 )
 
@@ -63,13 +63,16 @@ async def _ai_request_extract(messages: list):
             raise
 
 @map_openai_errors
-async def ai_chat(prompt: str, cookies: Cookies, embeddings: list[Chunk] | None = None) -> Metrics:
+async def ai_chat(prompt: str, cookies: Cookies, embeddings: list[tuple[Chunk, float]] | None = None) -> Metrics:
     start_time = time.time()
     history = message_history.setdefault(cookies.session_id, [])
     if embeddings:
-        context = [[embedding.content] for embedding in embeddings]
-        vect = [[embedding.embedding] for embedding in embeddings]
-        chunks = [{"context": c, "vectors": v} for c, v in zip(context, vect)]
+        context_list = []
+        chunks = []
+        for idx, embedding in enumerate(embeddings):
+            context_list.append(f"[{idx+1}] {embedding[0].content}")
+            chunks.append(f"[{idx+1}] {embedding[0].content} - {embedding[1]}")
+        context = "\n\n".join(context_list)
         current_message = history + [{"role": "system", "content": "отвечай только на основе предоставленного контекста, "
                                     "если ответа нет в контексте — так и скажи"},
                                     {"role": "user", "content": f"Контекст: {context}\nПромпт: {prompt}"}]

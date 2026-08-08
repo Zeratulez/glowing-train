@@ -1,7 +1,7 @@
 import pytest
 import pathlib
 from httpx import AsyncClient, ASGITransport
-from src.main import app  # Импортируйте ваш экземпляр FastAPI
+from src.main import app
 
 
 @pytest.fixture
@@ -11,7 +11,6 @@ async def client():
 
 
 async def test_chat_with_cookies(client: AsyncClient):
-    # Передаем куки прямо в запрос
     response = await client.post(
         "/chat", 
         json="Привет, ИИ!",
@@ -20,7 +19,6 @@ async def test_chat_with_cookies(client: AsyncClient):
     assert response.status_code == 200
 
 async def test_chat_with_stream_cookies(client: AsyncClient):
-    # Передаем куки прямо в запрос
     async with client.stream(
         "POST",
         "/chat/stream", 
@@ -32,7 +30,6 @@ async def test_chat_with_stream_cookies(client: AsyncClient):
                 print("chunk:", line)
 
 async def test_chat_with_extract_cookies(client: AsyncClient):
-    # Передаем куки прямо в запрос
     response = await client.post(
         "/extract", 
         json="Привет, ИИ!",
