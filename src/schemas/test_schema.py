@@ -23,3 +23,10 @@ class Metrics(BaseModel):
         # missed_tokens = self.input_tokens - self.cached_tokens
         # return (((settings.INPUT_CACHE_HIT * self.cached_tokens) + (settings.INPUT_CACHE_MISS * missed_tokens) 
                  # + (settings.OUTPUT_TOKENS * self.output_tokens)) / 1_000_000.0)
+
+
+class SearchArgs(BaseModel):
+    query: str
+
+class CalcArgs(BaseModel):
+    expression: str

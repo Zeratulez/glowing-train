@@ -3,13 +3,15 @@ import uuid
 
 from typing import Annotated
 
+from asteval import Interpreter
 from fastapi import status, HTTPException, Response, Cookie
 from openai import APIStatusError, APIConnectionError, APITimeoutError
 from openai.types.chat import ChatCompletion, ParsedChatCompletion
 from openai.types.completion_usage import CompletionUsage
 
 from src.schemas.test_schema import Metrics, Cookies
-from src.dependencies.rag import chunking
+
+aeval = Interpreter()
 
 def is_retryable(exception: Exception):
     if isinstance(exception, APIStatusError):
@@ -74,3 +76,9 @@ def get_cookie(response: Response, cookies: Annotated[Cookies | None, Cookie()] 
         cookies = Cookies(session_id=new_session_id)
         response.set_cookie(key="session_id", value=new_session_id, httponly=True, expires=3600)
     return cookies
+
+def calculation(expression: str):
+    result = aeval(expression)
+    if aeval.error:
+        raise Exception(f"Ошибка {aeval.error} с сообщением: {aeval.error_msg}")
+    return result

@@ -22,7 +22,7 @@ services:
       - FILEPATH=/app/documents
     volumes:
       - .:/app
-      - "C:\\Users\\Almaz\\Desktop\\python_work\\RAG:/app/documents"
+      - "${DOCUMENT_PATH}:/app/documents"
 
   db:
     image: pgvector/pgvector:pg18

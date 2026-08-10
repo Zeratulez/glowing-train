@@ -11,7 +11,7 @@ from src.core.settings import settings
 
 model = OllamaEmbeddings(model="bge-m3", base_url=settings.OLLAMA_URL)
 
-async def prompt_embedding(session: AsyncSession, text: str):
+async def prompt_embedding(session: AsyncSession, text: str) -> list[tuple[Chunk, float]] | None:
     embeddings = await model.aembed_query(text)
     distance = Chunk.embedding.cosine_distance(embeddings)
     query = select(Chunk, distance).order_by(distance).limit(5)
