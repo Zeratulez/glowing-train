@@ -1,0 +1,29 @@
+[project]
+name = "glowing-train"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Zeratulez", email = "aks.aks.25@mail.ru" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "alembic>=1.19.1",
+    "asteval>=1.0.9",
+    "asyncpg>=0.31.0",
+    "fastapi[standard]>=0.141.1",
+    "fastmcp>=3.4.7",
+    "langchain-ollama>=1.1.0",
+    "langchain-text-splitters>=1.1.2",
+    "openai>=2.53.0",
+    "pgvector>=0.5.0",
+    "pytest>=9.1.1",
+    "sqlalchemy>=2.0.51",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv]
+package = false

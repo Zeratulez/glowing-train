@@ -12,7 +12,6 @@ from src.core.settings import settings
 from src.schemas.test_schema import Test_Schema, Cookies, Metrics
 from src.models.chunks import Chunk
 from src.dependencies.utils import is_retryable, map_openai_errors, map_openai_errors_stream, metrics_formatted, metrics_formatted_stream
-from src.dependencies.ai_tools import TOOL_SCHEMAS
 
 message_history: dict[str, list] = {}
 
@@ -20,7 +19,7 @@ message_history: dict[str, list] = {}
 sem = asyncio.Semaphore(3)
 
 @retry(wait=wait_exponential_jitter(max=5), retry=retry_if_exception(is_retryable), stop=stop_after_attempt(3), reraise=True)
-async def _ai_request(messages: list, tools=TOOL_SCHEMAS):
+async def _ai_request(messages: list, tools=None):
     async with sem:
         return await client.chat.completions.create(
                     model=settings.AI_MODEL,

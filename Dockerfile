@@ -8,6 +8,7 @@
 
 ARG PYTHON_VERSION=3.13.2
 FROM python:${PYTHON_VERSION}-slim as base
+COPY --from=ghcr.io/astral-sh/uv:0.12.3 /uv /uvx /bin/
 
 # Prevents Python from writing pyc files.
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -34,9 +35,14 @@ RUN adduser \
 # Leverage a cache mount to /root/.cache/pip to speed up subsequent builds.
 # Leverage a bind mount to requirements.txt to avoid having to copy them into
 # into this layer.
-RUN --mount=type=cache,target=/root/.cache/pip \
-    --mount=type=bind,source=requirements.txt,target=requirements.txt \
-    python -m pip install -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    uv sync --frozen --no-install-project
+
+# Place the virtual environment's executables on PATH so commands like
+# "fastapi" can be found at runtime.
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Switch to the non-privileged user to run the application.
 USER appuser

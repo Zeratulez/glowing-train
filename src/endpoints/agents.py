@@ -17,7 +17,7 @@ router = APIRouter()
 async def react_loop(session: AsyncSession, max_iterations: int, action_history: set, current_message: list):
     for iteration in range(1, max_iterations+1):
         logger.info(f"[Iteration {iteration}/{max_iterations}], request to LLM\n")
-        response = await _ai_request(current_message)
+        response = await _ai_request(current_message, tools=TOOL_SCHEMAS)
         model_output = response.choices[0].message
         logger.info(f"LLM response: {model_output}\n")
 

@@ -74,7 +74,7 @@ def get_cookie(response: Response, cookies: Annotated[Cookies | None, Cookie()] 
     if not cookies or not cookies.session_id:
         new_session_id = str(uuid.uuid4())
         cookies = Cookies(session_id=new_session_id)
-        response.set_cookie(key="session_id", value=new_session_id, httponly=True, expires=3600)
+        response.set_cookie(key="session_id", value=new_session_id, httponly=True, max_age=3600)
     return cookies
 
 def calculation(expression: str):

@@ -16,13 +16,14 @@ class Settings(BaseSettings):
     DB_USER: str
     DB_PASSWORD: str
     DB_NAME: str
+    DB_HOST: str
 
     FILEPATH: str
     OLLAMA_URL: str
 
     @property
     def ASYNC_ENGINE_CONNECT(self):
-        return f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASSWORD}@db:5432/{self.DB_NAME}"
+        return f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:5432/{self.DB_NAME}"
     
     model_config = SettingsConfigDict(env_file=ENV_DIR / ".env", extra="ignore")
 

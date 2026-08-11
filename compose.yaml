@@ -22,6 +22,7 @@ services:
       - FILEPATH=/app/documents
     volumes:
       - .:/app
+      - /app/.venv
       - "${DOCUMENT_PATH}:/app/documents"
 
   db:
