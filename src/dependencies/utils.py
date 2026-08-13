@@ -23,6 +23,8 @@ def map_openai_errors(func):
     async def wrapper(*args, **kwargs):
         try:
             return await func(*args, **kwargs)
+        except HTTPException:
+            raise
         except APIStatusError as e:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Ошибка на стороне сервиса: {e.message}")
         except (APIConnectionError, APITimeoutError) as e:
@@ -37,6 +39,8 @@ def map_openai_errors_stream(func):
         try:
             async for chunk in func(*args, **kwargs):
                 yield chunk
+        except HTTPException:
+            raise
         except APIStatusError as e:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Ошибка на стороне сервиса: {e.message}")
         except (APIConnectionError, APITimeoutError) as e:
